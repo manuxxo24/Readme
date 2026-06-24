@@ -1,0 +1,125 @@
+//@version=5
+indicator("Fabio Valentini Strategy", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ─────────────────────────────────────────────
+//  INPUTS
+// ─────────────────────────────────────────────
+grpTrend  = "Trend EMAs"
+emaF      = input.int(9,   "EMA Fast",   minval=1, group=grpTrend)
+emaM      = input.int(21,  "EMA Medium", minval=1, group=grpTrend)
+emaS      = input.int(200, "EMA Slow (Trend Filter)", minval=1, group=grpTrend)
+
+grpRsi    = "RSI Filter"
+rsiLen    = input.int(14, "RSI Length",     minval=1, group=grpRsi)
+rsiOb     = input.int(70, "RSI Overbought", minval=50, maxval=100, group=grpRsi)
+rsiOs     = input.int(30, "RSI Oversold",   minval=0,  maxval=50,  group=grpRsi)
+
+grpRisk   = "Risk Management"
+atrLen    = input.int(14,  "ATR Length",              minval=1,  group=grpRisk)
+slMult    = input.float(1.5, "SL ATR Multiplier",     minval=0.1, step=0.1, group=grpRisk)
+rrRatio   = input.float(2.0, "Risk / Reward Ratio",   minval=0.5, step=0.5, group=grpRisk)
+
+grpDisp   = "Display"
+showEmas  = input.bool(true,  "Show EMAs",              group=grpDisp)
+showBg    = input.bool(true,  "Show Trend Background",  group=grpDisp)
+showLbls  = input.bool(true,  "Show SL / TP Labels",    group=grpDisp)
+
+// ─────────────────────────────────────────────
+//  CALCULATIONS
+// ─────────────────────────────────────────────
+fast   = ta.ema(close, emaF)
+med    = ta.ema(close, emaM)
+slow   = ta.ema(close, emaS)
+rsi    = ta.rsi(close, rsiLen)
+atr    = ta.atr(atrLen)
+
+// Trend context: price must be on the right side of EMA 200
+inUpTrend   = close > slow and fast > med
+inDownTrend = close < slow and fast < med
+
+// Entry triggers: EMA 9 crosses EMA 21
+crossUp   = ta.crossover(fast, med)
+crossDown = ta.crossunder(fast, med)
+
+// Full entry conditions
+longSignal  = crossUp   and inUpTrend   and rsi > 50 and rsi < rsiOb
+shortSignal = crossDown and inDownTrend and rsi < 50 and rsi > rsiOs
+
+// SL and TP based on ATR
+longSL  = close - atr * slMult
+longTP  = close + atr * slMult * rrRatio
+shortSL = close + atr * slMult
+shortTP = close - atr * slMult * rrRatio
+
+// ─────────────────────────────────────────────
+//  PLOTS — EMAs
+// ─────────────────────────────────────────────
+plot(showEmas ? fast : na, "EMA 9",   color=color.new(color.blue,   0), linewidth=1)
+plot(showEmas ? med  : na, "EMA 21",  color=color.new(color.orange, 0), linewidth=1)
+plot(showEmas ? slow : na, "EMA 200", color=color.new(color.red,    0), linewidth=2)
+
+// ─────────────────────────────────────────────
+//  TREND BACKGROUND
+// ─────────────────────────────────────────────
+bgcolor(showBg and inUpTrend   ? color.new(color.green, 93) : na, title="Up Trend BG")
+bgcolor(showBg and inDownTrend ? color.new(color.red,   93) : na, title="Down Trend BG")
+
+// ─────────────────────────────────────────────
+//  ENTRY SIGNALS
+// ─────────────────────────────────────────────
+plotshape(longSignal,  title="Long Entry",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0), size=size.normal)
+plotshape(shortSignal, title="Short Entry", style=shape.triangledown,  location=location.abovebar, color=color.new(color.red,   0), size=size.normal)
+
+// ─────────────────────────────────────────────
+//  SL / TP LABELS
+// ─────────────────────────────────────────────
+_price(v) => str.tostring(math.round(v, 2))
+
+if longSignal and showLbls
+    label.new(bar_index, longTP, "TP " + _price(longTP),
+              color=color.new(color.green, 10), textcolor=color.white,
+              style=label.style_label_down, size=size.small)
+    label.new(bar_index, longSL, "SL " + _price(longSL),
+              color=color.new(color.red, 10),   textcolor=color.white,
+              style=label.style_label_up,   size=size.small)
+
+if shortSignal and showLbls
+    label.new(bar_index, shortTP, "TP " + _price(shortTP),
+              color=color.new(color.green, 10), textcolor=color.white,
+              style=label.style_label_up,   size=size.small)
+    label.new(bar_index, shortSL, "SL " + _price(shortSL),
+              color=color.new(color.red, 10),   textcolor=color.white,
+              style=label.style_label_down, size=size.small)
+
+// ─────────────────────────────────────────────
+//  INFO TABLE (live signal status)
+// ─────────────────────────────────────────────
+var table infoBox = table.new(position.top_right, 2, 5,
+                               border_color=color.gray, border_width=1,
+                               frame_color=color.gray, frame_width=1)
+
+trendTxt  = inUpTrend ? "▲ BULL" : inDownTrend ? "▼ BEAR" : "── NEUTRAL"
+trendCol  = inUpTrend ? color.green : inDownTrend ? color.red : color.gray
+rsiTxt    = str.tostring(math.round(rsi, 1))
+signalTxt = longSignal ? "LONG ▲" : shortSignal ? "SHORT ▼" : "–"
+signalCol = longSignal ? color.green : shortSignal ? color.red : color.gray
+
+if barstate.islast
+    table.cell(infoBox, 0, 0, "TREND",  text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(infoBox, 1, 0, trendTxt, text_color=trendCol,    bgcolor=color.new(color.black, 20))
+    table.cell(infoBox, 0, 1, "RSI",    text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(infoBox, 1, 1, rsiTxt,   text_color=color.white, bgcolor=color.new(color.black, 20))
+    table.cell(infoBox, 0, 2, "SIGNAL", text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(infoBox, 1, 2, signalTxt,text_color=signalCol,   bgcolor=color.new(color.black, 20))
+    table.cell(infoBox, 0, 3, "SL",     text_color=color.white, bgcolor=color.new(color.gray, 30))
+    slVal = longSignal ? _price(longSL) : shortSignal ? _price(shortSL) : "–"
+    table.cell(infoBox, 1, 3, slVal,    text_color=color.red,   bgcolor=color.new(color.black, 20))
+    table.cell(infoBox, 0, 4, "TP",     text_color=color.white, bgcolor=color.new(color.gray, 30))
+    tpVal = longSignal ? _price(longTP) : shortSignal ? _price(shortTP) : "–"
+    table.cell(infoBox, 1, 4, tpVal,    text_color=color.green, bgcolor=color.new(color.black, 20))
+
+// ─────────────────────────────────────────────
+//  ALERTS
+// ─────────────────────────────────────────────
+alertcondition(longSignal,  "Valentini – LONG",  "Fabio Valentini: LONG entry. SL={{plot_0}} TP={{plot_1}}")
+alertcondition(shortSignal, "Valentini – SHORT", "Fabio Valentini: SHORT entry. SL={{plot_0}} TP={{plot_1}}")
