@@ -1,0 +1,157 @@
+//@version=5
+indicator("Fabio Valentini - IVB (Inversione di Breve)", overlay=true, max_labels_count=500)
+
+// ─────────────────────────────────────────────
+//  INPUTS
+// ─────────────────────────────────────────────
+grpTrend    = "Trend Settings"
+emaF        = input.int(9,    "EMA Fast",                 minval=1,            group=grpTrend)
+emaM        = input.int(21,   "EMA Medium",               minval=1,            group=grpTrend)
+emaS        = input.int(200,  "EMA Slow (Trend)",         minval=1,            group=grpTrend)
+
+grpFilter   = "Signal Filters"
+adxLen      = input.int(14,   "ADX Length",               minval=1,            group=grpFilter)
+adxMin      = input.int(20,   "ADX Min (trend strength)", minval=5,            group=grpFilter)
+useRsi      = input.bool(true,"RSI Filter",                                    group=grpFilter)
+rsiLen      = input.int(14,   "RSI Length",               minval=1,            group=grpFilter)
+rsiOsLvl    = input.int(50,   "RSI Max for Long entry",   minval=1, maxval=70, group=grpFilter)
+rsiObLvl    = input.int(50,   "RSI Min for Short entry",  minval=30,maxval=99, group=grpFilter)
+useVol      = input.bool(true,"Volume Filter",                                 group=grpFilter)
+volMult     = input.float(1.2,"Min Volume Multiplier",    minval=1.0,step=0.1, group=grpFilter)
+
+grpIvb      = "IVB Candle Detection"
+wickRatio   = input.float(2.0,"Min Wick/Body Ratio",      minval=1.0,step=0.1, group=grpIvb)
+minCandleSz = input.float(0.5,"Min Candle Size (ATR mult)",minval=0.1,step=0.1,group=grpIvb)
+
+grpPb       = "Pullback Confirmation"
+pbLookback  = input.int(3,    "Bars to confirm EMA 21 touch", minval=1, maxval=10, group=grpPb)
+
+grpRisk     = "Risk Management"
+rrRatio     = input.float(2.0,"Risk / Reward Ratio",      minval=0.5,step=0.5, group=grpRisk)
+slBuffer    = input.float(0.2,"SL Buffer (ATR mult)",     minval=0.0,step=0.1, group=grpRisk)
+
+grpDisp     = "Display"
+showEmas    = input.bool(true,"Show EMAs",                                     group=grpDisp)
+showBg      = input.bool(true,"Show Trend Background",                         group=grpDisp)
+showLbls    = input.bool(true,"Show SL / TP Labels",                           group=grpDisp)
+
+// ─────────────────────────────────────────────
+//  CALCULATIONS
+// ─────────────────────────────────────────────
+fast   = ta.ema(close, emaF)
+med    = ta.ema(close, emaM)
+slow   = ta.ema(close, emaS)
+atr    = ta.atr(14)
+rsi    = ta.rsi(close, rsiLen)
+volAvg = ta.sma(volume, 20)
+
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+trendStrong = adx > adxMin
+
+upTrend   = close > slow
+downTrend = close < slow
+
+// Price must have touched EMA 21 within last N bars
+touchedUp   = false
+touchedDown = false
+for i = 0 to pbLookback - 1
+    if low[i] <= med[i]
+        touchedUp := true
+    if high[i] >= med[i]
+        touchedDown := true
+
+volOk      = not useVol or volume >= volAvg * volMult
+rsiOkLong  = not useRsi or rsi <= rsiOsLvl
+rsiOkShort = not useRsi or rsi >= rsiObLvl
+
+candleSize      = high - low
+candleBigEnough = candleSize >= atr * minCandleSz
+
+bodySize  = math.abs(close - open)
+lowerWick = math.min(open, close) - low
+upperWick = high - math.max(open, close)
+
+bullPin = close > open and lowerWick >= bodySize * wickRatio and lowerWick > upperWick
+bearPin = close < open and upperWick >= bodySize * wickRatio and upperWick > lowerWick
+
+prevBodyTop    = math.max(open[1], close[1])
+prevBodyBottom = math.min(open[1], close[1])
+prevBodySz     = prevBodyTop - prevBodyBottom
+
+bullEngulf = close > open and open[1] > close[1] and prevBodySz > 0 and close >= prevBodyTop and open <= prevBodyBottom
+bearEngulf = close < open and close[1] > open[1] and prevBodySz > 0 and open >= prevBodyTop and close <= prevBodyBottom
+
+bullCandle = bullPin or bullEngulf
+bearCandle = bearPin or bearEngulf
+
+ivbLong  = upTrend   and trendStrong and touchedUp   and bullCandle and candleBigEnough and volOk and rsiOkLong
+ivbShort = downTrend and trendStrong and touchedDown and bearCandle and candleBigEnough and volOk and rsiOkShort
+
+longSL  = low  - atr * slBuffer
+longTP  = close + (close - longSL) * rrRatio
+shortSL = high + atr * slBuffer
+shortTP = close - (shortSL - close) * rrRatio
+
+// ─────────────────────────────────────────────
+//  PLOTS
+// ─────────────────────────────────────────────
+plot(showEmas ? fast : na, "EMA 9",   color=color.new(color.blue,   0), linewidth=1)
+plot(showEmas ? med  : na, "EMA 21",  color=color.new(color.orange, 0), linewidth=2)
+plot(showEmas ? slow : na, "EMA 200", color=color.new(color.red,    0), linewidth=2)
+
+bgcolor(showBg and upTrend   ? color.new(color.green, 93) : na, title="Up Trend BG")
+bgcolor(showBg and downTrend ? color.new(color.red,   93) : na, title="Down Trend BG")
+
+plotshape(ivbLong,  "IVB Long",  shape.triangleup,  location.belowbar, color.new(color.green, 0), size=size.normal, text="IVB")
+plotshape(ivbShort, "IVB Short", shape.triangledown, location.abovebar, color.new(color.red,   0), size=size.normal, text="IVB")
+
+_p(v) => str.tostring(math.round(v, 2))
+patternLong  = bullPin ? "Pin Bar" : "Engulfing"
+patternShort = bearPin ? "Pin Bar" : "Engulfing"
+
+if ivbLong and showLbls
+    label.new(bar_index, low - atr * 0.4, patternLong, color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    label.new(bar_index + 1, longTP, "TP " + _p(longTP) + " [" + _p(rrRatio) + "R]", color=color.new(color.green, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
+    label.new(bar_index + 1, longSL, "SL " + _p(longSL), color=color.new(color.red, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+if ivbShort and showLbls
+    label.new(bar_index, high + atr * 0.4, patternShort, color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    label.new(bar_index + 1, shortTP, "TP " + _p(shortTP) + " [" + _p(rrRatio) + "R]", color=color.new(color.green, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
+    label.new(bar_index + 1, shortSL, "SL " + _p(shortSL), color=color.new(color.red, 10), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+// ─────────────────────────────────────────────
+//  INFO TABLE
+// ─────────────────────────────────────────────
+var table t = table.new(position.top_right, 2, 7, border_color=color.gray, border_width=1, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    trendTxt = upTrend ? "BULL" : downTrend ? "BEAR" : "NEUTRAL"
+    trendCol = upTrend ? color.green : downTrend ? color.red : color.gray
+    adxTxt   = str.tostring(math.round(adx, 1)) + (trendStrong ? " OK" : " LOW")
+    adxCol   = trendStrong ? color.green : color.red
+    rsiTxt   = str.tostring(math.round(rsi, 1))
+    sigTxt   = ivbLong ? "LONG" : ivbShort ? "SHORT" : "-"
+    sigCol   = ivbLong ? color.green : ivbShort ? color.red : color.gray
+    slTxt    = ivbLong ? _p(longSL)  : ivbShort ? _p(shortSL) : "-"
+    tpTxt    = ivbLong ? _p(longTP)  : ivbShort ? _p(shortTP) : "-"
+
+    table.cell(t, 0, 0, "TREND",  text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 0, trendTxt, text_color=trendCol,    bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 1, "ADX",    text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 1, adxTxt,   text_color=adxCol,      bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 2, "RSI",    text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 2, rsiTxt,   text_color=color.white, bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 3, "SIGNAL", text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 3, sigTxt,   text_color=sigCol,      bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 4, "ENTRY",  text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 4, _p(close),text_color=color.white, bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 5, "SL",     text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 5, slTxt,    text_color=color.red,   bgcolor=color.new(color.black, 20))
+    table.cell(t, 0, 6, "TP",     text_color=color.white, bgcolor=color.new(color.gray, 30))
+    table.cell(t, 1, 6, tpTxt,    text_color=color.green, bgcolor=color.new(color.black, 20))
+
+// ─────────────────────────────────────────────
+//  ALERTS
+// ─────────────────────────────────────────────
+alertcondition(ivbLong,  "IVB Long",  "Valentini IVB: LONG setup - all filters passed")
+alertcondition(ivbShort, "IVB Short", "Valentini IVB: SHORT setup - all filters passed")
